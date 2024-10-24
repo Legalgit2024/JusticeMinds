@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Interaction Chat with Recording</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f4f4f4; padding: 20px; }
+        #chatOutput { margin-top: 20px; border: 1px solid #ccc; padding: 10px; height: 300px; overflow-y: scroll; background: white; }
+        button { padding: 10px 20px; font-size: 16px; cursor: pointer; margin-top: 10px; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+
+<h2>Talk to the AI Agent</h2>
+<button id="talkButton">Start Chat</button>
+<div id="chatOutput"></div>
+<button id="downloadButton" class="hidden">Download Recording</button>
+<button id="generateReportButton" class="hidden">Generate Report</button>
+
+<script>
+    let sseUrl;
+    let chatLog = [];
+    let mediaRecorder;
+    let audioChunks = [];
+
+    async function createStream() {
+        let response = await fetch("https://api.gooey.ai/v3/integrations/stream/", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                "integration_id": "QKW",
+                "input_prompt": "Hello! How can I assist you today?",
+            }),
+        });
+        sseUrl = response.headers.get("Location");
+        startListening();
+    }
+
+    function startListening() {
+        const evtSource = new EventSource(sseUrl);
+        evtSource.onmessage = (event) => {
+            let data = JSON.parse(event.data);
+            appendChat(`AI: ${data.message}`);
+            if (data.type === "final_response") {
+                evtSource.close();
+                finalizeChat();
+            } else {
+                askUserForResponse();
+            }
+        };
+        evtSource.onerror = (event) => {
+            console.error(event.data);
+            evtSource.close();
+        };
+    }
+
+    function appendChat(message) {
+        chatLog.push(message);
+        document.getElementById('chatOutput').innerHTML += `<p>${message}</p>`;
+        document.getElementById('chatOutput').scrollTop = document.getElementById('chatOutput').scrollHeight;
+    }
+
+    function askUserForResponse() {
+        const recognition = new (window.SpeechRecognition || window.webkitSpeechRecognition)();
+        recognition.onresult = (event) => {
+            const userResponse = event.results[0][0].transcript;
+            appendChat(`You: ${userResponse}`);
+            sendUserResponse(userResponse);
+        };
+        recognition.start();
+    }
+
+    async function sendUserResponse(userResponse) {
+        await fetch(sseUrl, {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                "integration_id": "QKW",
+                "input_prompt": userResponse,
+            }),
+        });
+    }
+
+    function finalizeChat() {
+        document.getElementById('downloadButton').classList.remove('hidden');
+        document.getElementById('generateReportButton').classList.remove('hidden');
+        // Stop recording and process audio
+        mediaRecorder.stop();
+    }
+
+    document.getElementById('talkButton').addEventListener('click', () => {
+        createStream();
+        startRecording();
+    });
+
+    function startRecording() {
+        navigator.mediaDevices.getUserMedia({ audio: true }).then(stream => {
+            mediaRecorder = new MediaRecorder(stream);
+            mediaRecorder.ondataavailable = event => {
+                audioChunks.push(event.data);
+            };
+            mediaRecorder.onstop = () => {
+                const audioBlob = new Blob(audioChunks);
+                const audioUrl = URL.createObjectURL(audioBlob);
+                const a = document.createElement('a');
+                a.style.display = 'none';
+                a.href = audioUrl;
+                a.download = 'chat_recording.webm';
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            };
+            mediaRecorder.start();
+        });
+    }
+
+    document.getElementById('generateReportButton').addEventListener('click', () => {
+        const reportContent = chatLog.join('\n');
+        const blob = new Blob([reportContent], { type: 'text/plain' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.style.display = 'none';
+        a.href = url;
+        a.download = 'meeting_report.txt';
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    });
+</script>
+
+</body>
+</html>
